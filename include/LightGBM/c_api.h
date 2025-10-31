@@ -1670,4 +1670,12 @@ LIGHTGBM_C_EXPORT int LGBM_BoosterSetSimpleCallback(
   LGBMSimpleCallback cb,
   void* user_data);
 
+/*!
+ * \brief Set drop indices for DART from Python callback
+ * \param indices Array of tree indices to drop
+ * \param num_indices Number of indices in the array
+ * \return 0 on success, -1 on failure
+ */
+LIGHTGBM_C_EXPORT int LGBM_DartSetDropIndices(const int* indices, int num_indices);
+
 #endif  /* LIGHTGBM_INCLUDE_LIGHTGBM_C_API_H_ */

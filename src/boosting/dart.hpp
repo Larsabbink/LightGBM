@@ -22,9 +22,13 @@ namespace LightGBM {
 typedef void(*LGBMSimpleCallback)(int iter, void* user_data);
 
 // Thread-local storage for callback (set from Booster class in c_api.cpp)
-// These allow DART::TrainOneIter to access the callback
+// These allow DART to access the callback
 extern thread_local LGBMSimpleCallback g_dart_simple_cb;
 extern thread_local void* g_dart_simple_cb_data;
+
+// Thread-local storage for drop indices returned from Python callback
+// If set, these will be used instead of random selection
+extern thread_local std::vector<int>* g_dart_drop_indices;
 
 /*!
 * \brief DART algorithm implementation. including Training, prediction, bagging.
@@ -76,11 +80,8 @@ class DART: public GBDT {
       tree_weight_.push_back(shrinkage_rate_);
       sum_weight_ += shrinkage_rate_;
     }
-    // Call registered callback if available (set from Python via C API)
-    // This callback is set thread-locally by Booster::TrainOneIter
-    if (g_dart_simple_cb != nullptr) {
-      g_dart_simple_cb(iter_, g_dart_simple_cb_data);
-    }
+    // Note: Callback is now called from DroppingTrees() where it can set drop indices
+    // This allows the callback to override the random tree selection
     return false;
   }
 
@@ -110,9 +111,25 @@ class DART: public GBDT {
   */
   void DroppingTrees() {
     drop_index_.clear();
-    bool is_skip = random_for_drop_.NextFloat() < config_->skip_drop;
-    // select dropping tree indices based on drop_rate and tree weights
-    if (!is_skip) {
+    
+    // Call Python callback FIRST - it can set drop indices via C API
+    // Reset drop indices before calling callback
+    if (g_dart_drop_indices != nullptr) {
+      g_dart_drop_indices->clear();
+    }
+    if (g_dart_simple_cb != nullptr) {
+      g_dart_simple_cb(iter_, g_dart_simple_cb_data);
+    }
+    
+    // Check if Python callback has provided drop indices
+    if (g_dart_drop_indices != nullptr && !g_dart_drop_indices->empty()) {
+      // Use drop indices from Python callback
+      drop_index_ = *g_dart_drop_indices;
+    } else {
+      // Fall back to original random selection logic
+      bool is_skip = random_for_drop_.NextFloat() < config_->skip_drop;
+      // select dropping tree indices based on drop_rate and tree weights
+      if (!is_skip) {
       double drop_rate = config_->drop_rate;
       if (!config_->uniform_drop) {
         double inv_average_weight = static_cast<double>(tree_weight_.size()) / sum_weight_;
@@ -141,6 +158,8 @@ class DART: public GBDT {
         }
       }
     }
+    }
+    
     // drop trees
     for (auto i : drop_index_) {
       for (int cur_tree_id = 0; cur_tree_id < num_tree_per_iteration_; ++cur_tree_id) {

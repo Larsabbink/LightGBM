@@ -302,6 +302,11 @@ if hasattr(_LIB, "LGBM_BoosterSetSimpleCallback"):
     _LIB.LGBM_BoosterSetSimpleCallback.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
     _LIB.LGBM_BoosterSetSimpleCallback.restype = ctypes.c_int
 
+# Set up LGBM_DartSetDropIndices function signature
+if hasattr(_LIB, "LGBM_DartSetDropIndices"):
+    _LIB.LGBM_DartSetDropIndices.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+    _LIB.LGBM_DartSetDropIndices.restype = ctypes.c_int
+
 
 _NUMERIC_TYPES = (int, float, bool)
 
@@ -4209,6 +4214,36 @@ class Booster:
                     ctypes.c_void_p(0),  # user_data passed via closure
                 )
             )
+        return self
+
+    def set_dart_drop_indices(self, indices: list) -> "Booster":
+        """Set drop indices for DART from Python callback.
+        
+        This method is called from within the training callback to specify
+        which trees should be dropped during DART training. If called, these
+        indices will override the random selection logic.
+        
+        Parameters
+        ----------
+        indices : list of int
+            List of tree indices to drop (0-based tree indices).
+            
+        Returns
+        -------
+        self : Booster
+            Booster with drop indices set.
+        """
+        if not hasattr(_LIB, "LGBM_DartSetDropIndices"):
+            raise LightGBMError("LGBM_DartSetDropIndices is not available in this build")
+        
+        if not indices:
+            # Clear drop indices
+            _safe_call(_LIB.LGBM_DartSetDropIndices(None, 0))
+        else:
+            # Convert Python list to C array
+            indices_array = (ctypes.c_int * len(indices))(*indices)
+            _safe_call(_LIB.LGBM_DartSetDropIndices(indices_array, len(indices)))
+        
         return self
 
     def __boost(

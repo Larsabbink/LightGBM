@@ -42,6 +42,7 @@ namespace LightGBM {
 // Thread-local storage definitions (defined here to avoid duplicate symbols)
 thread_local LGBMSimpleCallback g_dart_simple_cb = nullptr;
 thread_local void* g_dart_simple_cb_data = nullptr;
+thread_local std::vector<int>* g_dart_drop_indices = nullptr;
 
 inline int LGBM_APIHandleException(const std::exception& ex) {
   LGBM_SetLastError(ex.what());
@@ -3055,5 +3056,22 @@ int LGBM_BoosterSetSimpleCallback(BoosterHandle handle,
   API_BEGIN();
   Booster* ref_booster = reinterpret_cast<Booster*>(handle);
   ref_booster->SetSimpleCallback(cb, user_data);
+  API_END();
+}
+
+int LGBM_DartSetDropIndices(const int* indices, int num_indices) {
+  API_BEGIN();
+  // Use static thread-local storage for the vector
+  static thread_local std::vector<int> drop_indices_storage;
+  LightGBM::g_dart_drop_indices = &drop_indices_storage;
+  
+  // Clear and populate with new indices
+  LightGBM::g_dart_drop_indices->clear();
+  if (indices != nullptr && num_indices > 0) {
+    LightGBM::g_dart_drop_indices->reserve(num_indices);
+    for (int i = 0; i < num_indices; ++i) {
+      LightGBM::g_dart_drop_indices->push_back(indices[i]);
+    }
+  }
   API_END();
 }
