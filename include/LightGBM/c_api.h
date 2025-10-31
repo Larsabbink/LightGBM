@@ -1663,4 +1663,11 @@ INLINE_FUNCTION void LGBM_SetLastError(const char* msg) {
 #endif
 }
 
+typedef void (*LGBMSimpleCallback)(int iter, void* user_data);
+
+LIGHTGBM_C_EXPORT int LGBM_BoosterSetSimpleCallback(
+  BoosterHandle handle,
+  LGBMSimpleCallback cb,
+  void* user_data);
+
 #endif  /* LIGHTGBM_INCLUDE_LIGHTGBM_C_API_H_ */

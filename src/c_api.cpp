@@ -33,10 +33,15 @@
 #include <vector>
 
 #include "application/predictor.hpp"
+#include "boosting/dart.hpp"
 #include <LightGBM/utils/yamc/alternate_shared_mutex.hpp>
 #include <LightGBM/utils/yamc/yamc_shared_lock.hpp>
 
 namespace LightGBM {
+
+// Thread-local storage definitions (defined here to avoid duplicate symbols)
+thread_local LGBMSimpleCallback g_dart_simple_cb = nullptr;
+thread_local void* g_dart_simple_cb_data = nullptr;
 
 inline int LGBM_APIHandleException(const std::exception& ex) {
   LGBM_SetLastError(ex.what());
@@ -412,7 +417,24 @@ class Booster {
 
   bool TrainOneIter() {
     UNIQUE_LOCK(mutex_)
-    return boosting_->TrainOneIter(nullptr, nullptr);
+    // Set thread-local callback for DART to access
+    LGBMSimpleCallback old_cb = LightGBM::g_dart_simple_cb;
+    void* old_data = LightGBM::g_dart_simple_cb_data;
+    LightGBM::g_dart_simple_cb = simple_cb_;
+    LightGBM::g_dart_simple_cb_data = simple_cb_data_;
+    
+    bool result = boosting_->TrainOneIter(nullptr, nullptr);
+    
+    // Restore old callback (if any)
+    LightGBM::g_dart_simple_cb = old_cb;
+    LightGBM::g_dart_simple_cb_data = old_data;
+    
+    // Also call callback here for non-DART boosting types
+    if (simple_cb_ != nullptr && config_.boosting != std::string("dart")) {
+      int current_iter = boosting_->GetCurrentIteration();
+      simple_cb_(current_iter, simple_cb_data_);
+    }
+    return result;
   }
 
   void Refit(const int32_t* leaf_preds, int32_t nrow, int32_t ncol) {
@@ -422,7 +444,24 @@ class Booster {
 
   bool TrainOneIter(const score_t* gradients, const score_t* hessians) {
     UNIQUE_LOCK(mutex_)
-    return boosting_->TrainOneIter(gradients, hessians);
+    // Set thread-local callback for DART to access
+    LGBMSimpleCallback old_cb = LightGBM::g_dart_simple_cb;
+    void* old_data = LightGBM::g_dart_simple_cb_data;
+    LightGBM::g_dart_simple_cb = simple_cb_;
+    LightGBM::g_dart_simple_cb_data = simple_cb_data_;
+    
+    bool result = boosting_->TrainOneIter(gradients, hessians);
+    
+    // Restore old callback (if any)
+    LightGBM::g_dart_simple_cb = old_cb;
+    LightGBM::g_dart_simple_cb_data = old_data;
+    
+    // Also call callback here for non-DART boosting types
+    if (simple_cb_ != nullptr && config_.boosting != std::string("dart")) {
+      int current_iter = boosting_->GetCurrentIteration();
+      simple_cb_(current_iter, simple_cb_data_);
+    }
+    return result;
   }
 
   void RollbackOneIter() {
@@ -879,6 +918,11 @@ class Booster {
 
   const Boosting* GetBoosting() const { return boosting_.get(); }
 
+  void SetSimpleCallback(LGBMSimpleCallback cb, void* user_data) {
+    simple_cb_ = cb;
+    simple_cb_data_ = user_data;
+  }
+
  private:
   const Dataset* train_data_;
   std::unique_ptr<Boosting> boosting_;
@@ -894,6 +938,9 @@ class Booster {
   std::unique_ptr<ObjectiveFunction> objective_fun_;
   /*! \brief mutex for threading safe call */
   mutable yamc::alternate::shared_mutex mutex_;
+  // Simple Python callback
+  LGBMSimpleCallback simple_cb_ = nullptr;
+  void* simple_cb_data_ = nullptr;
 };
 
 }  // namespace LightGBM
@@ -3000,4 +3047,13 @@ std::pair<int, double> CSC_RowIterator::NextNonZero() {
   } else {
     return std::make_pair(-1, 0.0);
   }
+}
+
+int LGBM_BoosterSetSimpleCallback(BoosterHandle handle,
+                                  LGBMSimpleCallback cb,
+                                  void* user_data) {
+  API_BEGIN();
+  Booster* ref_booster = reinterpret_cast<Booster*>(handle);
+  ref_booster->SetSimpleCallback(cb, user_data);
+  API_END();
 }

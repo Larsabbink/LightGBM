@@ -17,6 +17,15 @@
 #include "score_updater.hpp"
 
 namespace LightGBM {
+
+// Forward declaration for callback type (matches c_api.h)
+typedef void(*LGBMSimpleCallback)(int iter, void* user_data);
+
+// Thread-local storage for callback (set from Booster class in c_api.cpp)
+// These allow DART::TrainOneIter to access the callback
+extern thread_local LGBMSimpleCallback g_dart_simple_cb;
+extern thread_local void* g_dart_simple_cb_data;
+
 /*!
 * \brief DART algorithm implementation. including Training, prediction, bagging.
 */
@@ -66,6 +75,11 @@ class DART: public GBDT {
     if (!config_->uniform_drop) {
       tree_weight_.push_back(shrinkage_rate_);
       sum_weight_ += shrinkage_rate_;
+    }
+    // Call registered callback if available (set from Python via C API)
+    // This callback is set thread-locally by Booster::TrainOneIter
+    if (g_dart_simple_cb != nullptr) {
+      g_dart_simple_cb(iter_, g_dart_simple_cb_data);
     }
     return false;
   }
