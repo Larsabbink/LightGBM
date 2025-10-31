@@ -4139,6 +4139,7 @@ class Booster:
     def set_simple_callback(
         self,
         callback: Optional[Callable[[int, Optional[Any]], None]],
+        user_data: Optional[Any] = None,
     ) -> "Booster":
         """Set a simple callback function that will be called during training iterations.
 
@@ -4188,8 +4189,15 @@ class Booster:
             if hasattr(self, "_simple_cb"):
                 self._simple_cb = None
         else:
-            # Create C callback function from Python function
-            c_cb = _SIMPLE_CB(callback)
+            # Store user_data on booster to access in callback
+            self._simple_cb_user_data = user_data
+            
+            # Create wrapper callback that includes user_data
+            def callback_wrapper(iter, _):
+                callback(iter, user_data)
+            
+            # Create C callback function from Python wrapper function
+            c_cb = _SIMPLE_CB(callback_wrapper)
             # Store reference to prevent garbage collection
             self._simple_cb = c_cb
             # Convert callback to void* pointer for C API
@@ -4198,7 +4206,7 @@ class Booster:
                 _LIB.LGBM_BoosterSetSimpleCallback(
                     self._handle,
                     callback_ptr,
-                    ctypes.c_void_p(0),  # user_data not used currently
+                    ctypes.c_void_p(0),  # user_data passed via closure
                 )
             )
         return self
