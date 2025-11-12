@@ -66,21 +66,29 @@ class DART: public GBDT {
   }
 
   /*!
-  * \brief one training iteration
-  */
+   * \brief one training iteration
+   */
   bool TrainOneIter(const score_t* gradient, const score_t* hessian) override {
     is_update_score_cur_iter_ = false;
     bool ret = GBDT::TrainOneIter(gradient, hessian);
     if (ret) {
       return ret;
     }
+    
+    // Call callback after new tree is trained but BEFORE normalization
+    // This allows computing SHAP for the new tree while it's still in a valid state
+    // The callback can compute SHAP incrementally for just this new tree
+    if (g_dart_simple_cb != nullptr) {
+      g_dart_simple_cb(iter_, g_dart_simple_cb_data);
+    }
+    
     // normalize
     Normalize();
     if (!config_->uniform_drop) {
       tree_weight_.push_back(shrinkage_rate_);
       sum_weight_ += shrinkage_rate_;
     }
-    // Note: Callback is now called from DroppingTrees() where it can set drop indices
+    // Note: Callback is also called from DroppingTrees() where it can set drop indices
     // This allows the callback to override the random tree selection
     return false;
   }
@@ -112,7 +120,9 @@ class DART: public GBDT {
   void DroppingTrees() {
     drop_index_.clear();
     
-    // Call Python callback FIRST - it can set drop indices via C API
+    // Call Python callback to set drop indices via C API
+    // Note: SHAP computation now happens in TrainOneIter() before normalization
+    // This callback is for applying the drop decision based on accumulated SHAP scores
     // Reset drop indices before calling callback
     if (g_dart_drop_indices != nullptr) {
       g_dart_drop_indices->clear();

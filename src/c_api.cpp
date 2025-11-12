@@ -424,18 +424,36 @@ class Booster {
     LightGBM::g_dart_simple_cb = simple_cb_;
     LightGBM::g_dart_simple_cb_data = simple_cb_data_;
     
-    bool result = boosting_->TrainOneIter(nullptr, nullptr);
-    
-    // Restore old callback (if any)
-    LightGBM::g_dart_simple_cb = old_cb;
-    LightGBM::g_dart_simple_cb_data = old_data;
-    
-    // Also call callback here for non-DART boosting types
-    if (simple_cb_ != nullptr && config_.boosting != std::string("dart")) {
-      int current_iter = boosting_->GetCurrentIteration();
-      simple_cb_(current_iter, simple_cb_data_);
+    // For DART, temporarily convert to shared lock during training
+    // This allows the callback (which may need to access booster via SHAP)
+    // to read the booster state without deadlocking
+    if (config_.boosting == std::string("dart")) {
+      lock.unlock();  // Convert unique lock to unlocked
+      yamc::shared_lock<yamc::alternate::shared_mutex> shared_lock(&mutex_);
+      
+      bool result = boosting_->TrainOneIter(nullptr, nullptr);
+      
+      shared_lock.unlock();  // Release shared lock
+      lock.lock();  // Re-acquire unique lock
+      
+      // Restore old callback (if any)
+      LightGBM::g_dart_simple_cb = old_cb;
+      LightGBM::g_dart_simple_cb_data = old_data;
+      return result;
+    } else {
+      bool result = boosting_->TrainOneIter(nullptr, nullptr);
+      
+      // Restore old callback (if any)
+      LightGBM::g_dart_simple_cb = old_cb;
+      LightGBM::g_dart_simple_cb_data = old_data;
+      
+      // Also call callback here for non-DART boosting types
+      if (simple_cb_ != nullptr) {
+        int current_iter = boosting_->GetCurrentIteration();
+        simple_cb_(current_iter, simple_cb_data_);
+      }
+      return result;
     }
-    return result;
   }
 
   void Refit(const int32_t* leaf_preds, int32_t nrow, int32_t ncol) {
@@ -451,18 +469,36 @@ class Booster {
     LightGBM::g_dart_simple_cb = simple_cb_;
     LightGBM::g_dart_simple_cb_data = simple_cb_data_;
     
-    bool result = boosting_->TrainOneIter(gradients, hessians);
-    
-    // Restore old callback (if any)
-    LightGBM::g_dart_simple_cb = old_cb;
-    LightGBM::g_dart_simple_cb_data = old_data;
-    
-    // Also call callback here for non-DART boosting types
-    if (simple_cb_ != nullptr && config_.boosting != std::string("dart")) {
-      int current_iter = boosting_->GetCurrentIteration();
-      simple_cb_(current_iter, simple_cb_data_);
+    // For DART, temporarily convert to shared lock during training
+    // This allows the callback (which may need to access booster via SHAP)
+    // to read the booster state without deadlocking
+    if (config_.boosting == std::string("dart")) {
+      lock.unlock();  // Convert unique lock to unlocked
+      yamc::shared_lock<yamc::alternate::shared_mutex> shared_lock(&mutex_);
+      
+      bool result = boosting_->TrainOneIter(gradients, hessians);
+      
+      shared_lock.unlock();  // Release shared lock
+      lock.lock();  // Re-acquire unique lock
+      
+      // Restore old callback (if any)
+      LightGBM::g_dart_simple_cb = old_cb;
+      LightGBM::g_dart_simple_cb_data = old_data;
+      return result;
+    } else {
+      bool result = boosting_->TrainOneIter(gradients, hessians);
+      
+      // Restore old callback (if any)
+      LightGBM::g_dart_simple_cb = old_cb;
+      LightGBM::g_dart_simple_cb_data = old_data;
+      
+      // Also call callback here for non-DART boosting types
+      if (simple_cb_ != nullptr) {
+        int current_iter = boosting_->GetCurrentIteration();
+        simple_cb_(current_iter, simple_cb_data_);
+      }
+      return result;
     }
-    return result;
   }
 
   void RollbackOneIter() {
