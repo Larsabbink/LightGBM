@@ -18,6 +18,14 @@
 
 namespace LightGBM {
 
+// Forward declaration for DART callback type
+typedef void (*LGBMDartCallback)(int iteration, void* user_data);
+
+// Thread-local storage for DART callback (set from Booster class in c_api.cpp)
+// These allow DART to access the callback
+extern thread_local LGBMDartCallback g_dart_callback;
+extern thread_local void* g_dart_callback_data;
+
 // Thread-local storage for drop indices returned from Python callback
 // If set, these will be used instead of random selection
 extern thread_local std::vector<int>* g_dart_drop_indices;
@@ -70,8 +78,8 @@ class DART: public GBDT {
     // Call callback after new tree is trained but BEFORE normalization
     // This allows computing SHAP for the new tree while it's still in a valid state
     // The callback can compute SHAP incrementally for just this new tree
-    if (g_dart_simple_cb != nullptr) {
-      g_dart_simple_cb(iter_, g_dart_simple_cb_data);
+    if (g_dart_callback != nullptr) {
+      g_dart_callback(iter_, g_dart_callback_data);
     }
     
     // normalize
@@ -116,6 +124,12 @@ class DART: public GBDT {
     // Reset drop indices before calling callback
     if (g_dart_drop_indices != nullptr) {
       g_dart_drop_indices->clear();
+    }
+    
+    // Call callback to allow Python code to set drop indices
+    // This is called from DroppingTrees() where the callback can use set_dart_drop_indices()
+    if (g_dart_callback != nullptr) {
+      g_dart_callback(iter_, g_dart_callback_data);
     }
     
     // Check if Python callback has provided drop indices
