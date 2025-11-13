@@ -18,14 +18,6 @@
 
 namespace LightGBM {
 
-// Forward declaration for callback type (matches c_api.h)
-typedef void(*LGBMSimpleCallback)(int iter, void* user_data);
-
-// Thread-local storage for callback (set from Booster class in c_api.cpp)
-// These allow DART to access the callback
-extern thread_local LGBMSimpleCallback g_dart_simple_cb;
-extern thread_local void* g_dart_simple_cb_data;
-
 // Thread-local storage for drop indices returned from Python callback
 // If set, these will be used instead of random selection
 extern thread_local std::vector<int>* g_dart_drop_indices;
@@ -121,14 +113,9 @@ class DART: public GBDT {
     drop_index_.clear();
     
     // Call Python callback to set drop indices via C API
-    // Note: SHAP computation now happens in TrainOneIter() before normalization
-    // This callback is for applying the drop decision based on accumulated SHAP scores
     // Reset drop indices before calling callback
     if (g_dart_drop_indices != nullptr) {
       g_dart_drop_indices->clear();
-    }
-    if (g_dart_simple_cb != nullptr) {
-      g_dart_simple_cb(iter_, g_dart_simple_cb_data);
     }
     
     // Check if Python callback has provided drop indices

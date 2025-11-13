@@ -1663,13 +1663,6 @@ INLINE_FUNCTION void LGBM_SetLastError(const char* msg) {
 #endif
 }
 
-typedef void (*LGBMSimpleCallback)(int iter, void* user_data);
-
-LIGHTGBM_C_EXPORT int LGBM_BoosterSetSimpleCallback(
-  BoosterHandle handle,
-  LGBMSimpleCallback cb,
-  void* user_data);
-
 /*!
  * \brief Set drop indices for DART from Python callback
  * \param indices Array of tree indices to drop

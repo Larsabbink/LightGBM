@@ -294,14 +294,6 @@ if environ.get("LIGHTGBM_BUILD_DOC", "False") != "True":
     if _LIB.LGBM_RegisterLogCallback(_LIB.callback) != 0:
         raise LightGBMError(_LIB.LGBM_GetLastError().decode("utf-8"))
 
-# Define callback type for simple training callback
-_SIMPLE_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
-
-# Set up LGBM_BoosterSetSimpleCallback function signature
-if hasattr(_LIB, "LGBM_BoosterSetSimpleCallback"):
-    _LIB.LGBM_BoosterSetSimpleCallback.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-    _LIB.LGBM_BoosterSetSimpleCallback.restype = ctypes.c_int
-
 # Set up LGBM_DartSetDropIndices function signature
 if hasattr(_LIB, "LGBM_DartSetDropIndices"):
     _LIB.LGBM_DartSetDropIndices.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
@@ -4140,81 +4132,6 @@ class Booster:
                 self.reset_parameter({"objective": "none"}).__set_objective_to_none = True
             grad, hess = fobj(self.__inner_predict(0), self.train_set)
             return self.__boost(grad, hess)
-
-    def set_simple_callback(
-        self,
-        callback: Optional[Callable[[int, Optional[Any]], None]],
-        user_data: Optional[Any] = None,
-    ) -> "Booster":
-        """Set a simple callback function that will be called during training iterations.
-
-        Parameters
-        ----------
-        callback : callable or None, optional (default=None)
-            Callback function that will be called after each training iteration.
-            The function should accept two parameters:
-            - iteration (int): The current iteration number
-            - user_data (optional): User data passed to the callback (currently None)
-            
-            If None, the callback will be cleared.
-
-        Returns
-        -------
-        self : Booster
-            Booster with callback set.
-
-        Notes
-        -----
-        This callback is particularly useful for DART boosting type, where it will
-        be called from within the DART training loop. For other boosting types,
-        it will be called after each iteration update.
-
-        Examples
-        --------
-        >>> def my_callback(iteration, userdata):
-        ...     print(f"Training iteration: {iteration}")
-        ...
-        >>> bst = lgb.Booster(params={'boosting_type': 'dart'}, train_set=train_data)
-        >>> bst.set_simple_callback(my_callback)
-        >>> bst.update()  # Callback will be triggered
-        """
-        if not hasattr(_LIB, "LGBM_BoosterSetSimpleCallback"):
-            raise LightGBMError("LGBM_BoosterSetSimpleCallback is not available in this build")
-        
-        if callback is None:
-            # Clear the callback - pass NULL pointers
-            _safe_call(
-                _LIB.LGBM_BoosterSetSimpleCallback(
-                    self._handle,
-                    ctypes.c_void_p(0),  # NULL function pointer
-                    ctypes.c_void_p(0),  # NULL user data
-                )
-            )
-            # Release reference to prevent memory leak
-            if hasattr(self, "_simple_cb"):
-                self._simple_cb = None
-        else:
-            # Store user_data on booster to access in callback
-            self._simple_cb_user_data = user_data
-            
-            # Create wrapper callback that includes user_data
-            def callback_wrapper(iter, _):
-                callback(iter, user_data)
-            
-            # Create C callback function from Python wrapper function
-            c_cb = _SIMPLE_CB(callback_wrapper)
-            # Store reference to prevent garbage collection
-            self._simple_cb = c_cb
-            # Convert callback to void* pointer for C API
-            callback_ptr = ctypes.cast(c_cb, ctypes.c_void_p)
-            _safe_call(
-                _LIB.LGBM_BoosterSetSimpleCallback(
-                    self._handle,
-                    callback_ptr,
-                    ctypes.c_void_p(0),  # user_data passed via closure
-                )
-            )
-        return self
 
     def set_dart_drop_indices(self, indices: list) -> "Booster":
         """Set drop indices for DART from Python callback.
