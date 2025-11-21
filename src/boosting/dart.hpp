@@ -6,6 +6,7 @@
 #define LIGHTGBM_SRC_BOOSTING_DART_HPP_
 
 #include <LightGBM/boosting.h>
+#include <LightGBM/utils/log.h>
 
 #include <string>
 #include <algorithm>
@@ -169,6 +170,18 @@ class DART: public GBDT {
         }
       }
     }
+    }
+
+    if (!drop_index_.empty()) {
+      std::string drop_indices_str = "Drop indices: [";
+      for (size_t i = 0; i < drop_index_.size(); ++i) {
+        if (i > 0) drop_indices_str += ", ";
+        drop_indices_str += std::to_string(drop_index_[i]);
+      }
+      drop_indices_str += "]";
+      Log::Info("DART iteration %d: %s", iter_, drop_indices_str.c_str());
+    } else {
+      Log::Info("DART iteration %d: No trees dropped", iter_);
     }
     
     // drop trees
