@@ -4,9 +4,10 @@ This document explains how the DART-specific callback mechanism works in LightGB
 
 ## Overview
 
-The DART callback mechanism allows Python code to be called during DART training iterations. The callback is invoked at two critical points:
-1. **After a new tree is trained** (before normalization) - for SHAP computation
-2. **During DroppingTrees()** - to allow setting drop indices via `set_dart_drop_indices()`
+The DART callback mechanism allows Python code to be called during DART training iterations. The callback is invoked once per iteration:
+- **During DroppingTrees()** - to allow setting drop indices via `set_dart_drop_indices()`
+
+Note: SHAP values should be computed after `booster.update()` completes, not during the callback.
 
 ---
 
@@ -107,36 +108,18 @@ bool TrainOneIter() {
 }
 ```
 
-### Step 7: DART Training Begins (`dart.hpp:71-76`)
+### Step 7: DART Training Begins (`dart.hpp:72-77`)
 
 - `DART::TrainOneIter()` is called
 - Calls `GBDT::TrainOneIter()` to train a new tree
-- After the tree is trained, but before normalization...
+- After the tree is trained, normalization happens
 
-### Step 8: First Callback Invocation - SHAP Computation Phase (`dart.hpp:81-83`)
-
-```cpp
-if (g_dart_callback != nullptr) {
-  g_dart_callback(iter_, g_dart_callback_data);
-}
-```
-
-**What happens:**
-- The callback is called with the current iteration number
-- Trees are still in a valid state (before normalization)
-- Python callback can:
-  - Compute SHAP values for the new tree
-  - Access tree structure
-  - Prepare drop decisions
-
-**Code location:** `dart.hpp:78-83`
-
-### Step 9: Normalization Happens (`dart.hpp:86`)
+### Step 8: Normalization Happens (`dart.hpp:87`)
 
 - DART normalizes the tree weights
 - This modifies the tree structure
 
-### Step 10: Training Score is Requested
+### Step 9: Training Score is Requested
 
 - When `GetTrainingScore()` is called, it triggers `DroppingTrees()`
 
@@ -151,7 +134,7 @@ const double* GetTrainingScore(int64_t* out_len) override {
 }
 ```
 
-### Step 11: Second Callback Invocation - Drop Decision Phase (`dart.hpp:120-133`)
+### Step 10: Callback Invocation - Drop Decision Phase (`dart.hpp:121-134`)
 
 ```cpp
 void DroppingTrees() {
@@ -172,9 +155,9 @@ void DroppingTrees() {
 ```
 
 **What happens:**
-- The callback is called again with the same iteration number
-- Python callback can now call `set_dart_drop_indices()`
-- This is the drop decision phase
+- The callback is called with the current iteration number
+- Python callback can call `set_dart_drop_indices()` to specify which trees to drop
+- This is the only callback invocation per iteration
 
 ---
 
@@ -262,19 +245,16 @@ LightGBM::g_dart_callback_data = old_data;
 
 ## Key Design Points
 
-### 1. Two Invocation Points
+### 1. Single Invocation Point
 
-The callback is called twice per iteration:
+The callback is called once per iteration:
 
-- **After tree training (before normalization)**: 
-  - Trees are in a valid state
-  - Perfect for SHAP computation
-  - Can access tree structure
-  
 - **During DroppingTrees()**: 
-  - Can set drop indices
+  - Can set drop indices via `set_dart_drop_indices()`
   - Override random selection
-  - Make intelligent drop decisions
+  - Make intelligent drop decisions based on previous iteration's results
+  
+Note: SHAP values should be computed after `booster.update()` completes, not during the callback.
 
 ### 2. Thread-Local Storage
 
@@ -295,7 +275,7 @@ The callback is called twice per iteration:
 1. **Set once** via `set_dart_callback()`
 2. **Stored** in Booster instance (`dart_cb_`, `dart_cb_data_`)
 3. **Activated per iteration** via thread-local storage
-4. **Called twice** per iteration (SHAP phase + drop phase)
+4. **Called once** per iteration (during drop decision phase)
 5. **Restored** after each iteration
 
 ---
@@ -306,6 +286,9 @@ The callback is called twice per iteration:
 import lightgbm as lgb
 import numpy as np
 
+# Store SHAP values from previous iteration to inform drop decisions
+previous_shap_values = None
+
 def my_dart_callback(iteration, userdata):
     """Callback function called during DART training."""
     booster = userdata
@@ -313,9 +296,10 @@ def my_dart_callback(iteration, userdata):
     print(f"DART iteration: {iteration}")
     print(f"Total trees: {booster.num_trees()}")
     
-    # Compute which trees to drop based on custom logic
-    # (e.g., using SHAP values, tree importance, etc.)
+    # Compute which trees to drop based on previous SHAP values
+    # (calculated after the previous update() call)
     trees_to_drop = [0, 1, 2]  # Example: drop first 3 trees
+    # In practice, you would analyze previous_shap_values here
     
     # Set drop indices (only works when called from DroppingTrees phase)
     booster.set_dart_drop_indices(trees_to_drop)
@@ -341,7 +325,12 @@ booster.set_dart_callback(my_dart_callback, user_data=booster)
 
 # Train - callback will be triggered during each iteration
 for i in range(5):
-    booster.update()
+    booster.update()  # Callback invoked once during drop decision phase
+    
+    # Now safely calculate SHAP values after update() completes
+    shap_values = booster.predict(X_train, pred_contrib=True)
+    previous_shap_values = shap_values
+    # Use SHAP values to inform next iteration's drop decision
 ```
 
 ---
@@ -387,7 +376,6 @@ for i in range(5):
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ DART::TrainOneIter()                                │   │
 │  │   - Trains new tree                                 │   │
-│  │   - CALLBACK #1: After tree, before normalization │   │
 │  │   - Normalizes tree                                 │   │
 │  └──────────────────┬───────────────────────────────────┘   │
 │                     │                                        │
@@ -400,7 +388,7 @@ for i in range(5):
 │                     ▼                                        │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ DART::DroppingTrees()                                 │   │
-│  │   - CALLBACK #2: During drop decision                │   │
+│  │   - CALLBACK: During drop decision                    │   │
 │  │   - Checks g_dart_drop_indices                        │   │
 │  │   - Uses callback indices OR random selection        │   │
 │  └──────────────────────────────────────────────────────┘   │
@@ -411,8 +399,8 @@ for i in range(5):
 │ Python Callback Execution                                    │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ callback(iteration, user_data)                      │   │
-│  │   - Can compute SHAP values                         │   │
 │  │   - Can call booster.set_dart_drop_indices([...])  │   │
+│  │   - Note: SHAP should be computed after update()    │   │
 │  └──────────────────┬───────────────────────────────────┘   │
 │                     │                                        │
 │                     ▼                                        │
@@ -428,10 +416,11 @@ for i in range(5):
 ## Summary
 
 This design allows Python code to:
-- ✅ Compute SHAP values incrementally
-- ✅ Make intelligent drop decisions
+- ✅ Make intelligent drop decisions based on previous iteration results
 - ✅ Override random tree selection
 - ✅ Access the booster state during training
 
 The callback mechanism is **DART-specific** and only active when `boosting_type='dart'`. It provides a clean separation between the training logic and custom Python code, enabling advanced use cases like SHAP-based tree dropping.
+
+**Important:** SHAP values should be computed after `booster.update()` completes, not during the callback. The callback is invoked once per iteration during the drop decision phase, where it can call `set_dart_drop_indices()` to specify which trees to drop.
 

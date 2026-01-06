@@ -76,20 +76,13 @@ class DART: public GBDT {
       return ret;
     }
     
-    // Call callback after new tree is trained but BEFORE normalization
-    // This allows computing SHAP for the new tree while it's still in a valid state
-    // The callback can compute SHAP incrementally for just this new tree
-    if (g_dart_callback != nullptr) {
-      g_dart_callback(iter_, g_dart_callback_data);
-    }
-    
     // normalize
     Normalize();
     if (!config_->uniform_drop) {
       tree_weight_.push_back(shrinkage_rate_);
       sum_weight_ += shrinkage_rate_;
     }
-    // Note: Callback is also called from DroppingTrees() where it can set drop indices
+    // Note: Callback is called from DroppingTrees() where it can set drop indices
     // This allows the callback to override the random tree selection
     return false;
   }
@@ -121,21 +114,20 @@ class DART: public GBDT {
   void DroppingTrees() {
     drop_index_.clear();
     
-    // Call Python callback to set drop indices via C API
     // Reset drop indices before calling callback
     if (g_dart_drop_indices != nullptr) {
       g_dart_drop_indices->clear();
     }
     
-    // Call callback to allow Python code to set drop indices
-    // This is called from DroppingTrees() where the callback can use set_dart_drop_indices()
+    // Call callback to allow Python code to set drop indices via set_dart_drop_indices()
+    // This is the only place the callback is invoked during each training iteration
     if (g_dart_callback != nullptr) {
       g_dart_callback(iter_, g_dart_callback_data);
     }
     
     // Check if Python callback has provided drop indices
-    if (g_dart_drop_indices != nullptr && !g_dart_drop_indices->empty()) {
-      // Use drop indices from Python callback
+    if (g_dart_drop_indices != nullptr) {
+      // Use drop indices from Python callback (even if empty - that means "drop nothing")
       drop_index_ = *g_dart_drop_indices;
     } else {
       // Fall back to original random selection logic

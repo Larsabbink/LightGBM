@@ -19,7 +19,7 @@ def get_tree_estimators_from_booster(booster):
     
     estimators = []
     
-    def count_feature_usage(tree_dict: Dict[str, Any]) -> Dict[int, int]:
+    def count_feature_usage(tree_dict):
         """Recursively count how many times each feature is used for splitting."""
         feature_usage = {}
         

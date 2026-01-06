@@ -4148,9 +4148,9 @@ class Booster:
     ) -> "Booster":
         """Set a callback function that will be called during DART training iterations.
 
-        This callback is specifically designed for DART boosting and is called at two points:
-        1. After a new tree is trained (before normalization) - for SHAP computation
-        2. During DroppingTrees() - to allow setting drop indices via set_dart_drop_indices()
+        This callback is specifically designed for DART boosting and is called once per
+        iteration during DroppingTrees() to allow setting drop indices via
+        set_dart_drop_indices().
 
         Parameters
         ----------
@@ -4174,6 +4174,10 @@ class Booster:
         -----
         This callback is only active when using 'dart' as the boosting type.
         The callback can use set_dart_drop_indices() to override the random tree selection.
+        
+        Note: SHAP values should be computed after booster.update() completes, not during
+        the callback. The callback is invoked once per iteration during the drop decision
+        phase.
 
         Examples
         --------

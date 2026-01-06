@@ -1,20 +1,30 @@
 import random
 from extract_data_from_booster import get_tree_estimators_from_booster
 
-def create_shap_drop_callback(X_train, y_train):
+def create_shap_drop_callback(X_train, y_train, drop_rate, skip_drop, max_drop, learning_rate, last_shap_iteration_index):
+    accumulated_shap = None
+    cached_explainer = None
+    cached_explainer_iteration = -1
+    last_shap_iteration = -1
     _y_train = y_train
+    _last_shap_iteration = last_shap_iteration_index
 
     def shap_drop_callback(iteration, userdata):
+        nonlocal accumulated_shap, cached_explainer, cached_explainer_iteration, last_shap_iteration
+        
         booster = userdata
         y_train = _y_train
 
         params = booster.params
-        current_drop_rate = drop_rate if drop_rate is not None else params.get('drop_rate', 0.1)
-        current_skip_drop = skip_drop if skip_drop is not None else params.get('skip_drop', 0.5)
-        current_max_drop = max_drop if max_drop is not None else params.get('max_drop', 0)
-        learning_rate = params.get('learning_rate', 0.1)
-        is_shap_computation_phase = (iteration > last_shap_iteration)
+        current_drop_rate = _drop_rate if _drop_rate is not None else params.get('drop_rate', 0.1)
+        current_skip_drop = _skip_drop if _skip_drop is not None else params.get('skip_drop', 0.5)
+        current_max_drop = _max_drop if _max_drop is not None else params.get('max_drop', 0)
+        learning_rate = _learning_rate if _learning_rate is not None else params.get('learning_rate', 0.1)
+        is_shap_computation_phase = (iteration > _last_shap_iteration)
 
+        if is_shap_computation_phase:
+            estimators = get_tree_estimators_from_booster(booster)
+            
         if not is_shap_computation_phase:
             determine_drop_mask(
                 booster,
@@ -24,7 +34,8 @@ def create_shap_drop_callback(X_train, y_train):
             )
 
         return 0
-
+    
+    return shap_drop_callback
 
 def determine_drop_mask(booster, drop_rate=None, skip_drop=None, max_drop=None, uniform_drop=True, drop_seed=42):
     random.seed(drop_seed)

@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
+import json
 
-def load_data_with_folds(file_path, target_col, drop_cols, n_folds, random_state):
+def load_data_with_folds(file_path, target_col, drop_cols, n_folds):
     df = pd.read_csv(file_path)
 
     X = df.drop(columns=[target_col] + drop_cols)
@@ -13,7 +14,7 @@ def load_data_with_folds(file_path, target_col, drop_cols, n_folds, random_state
     patient_to_fold = {patient: i % n_folds for i, patient in enumerate(shuffled_patient_ids)}
 
     fold_indices = [[] for _ in range(n_folds)]
-    for idx, patient_id in enumerate(patient_ids):
+    for patient_id in patient_ids:
         fold_idx = patient_to_fold[patient_id]
         fold_indices[fold_idx].append(patient_id)
 
@@ -46,3 +47,7 @@ def get_fold_data(X, y, patient_ids, fold_indices, fold_idx):
         raise ValueError(f"Patient leakage detected! Overlapping patients: {overlap}")
 
     return X_train, y_train, X_test, y_test
+
+def load_param_grid(config_path: str):
+    with open(config_path, "r") as f:
+        return json.load(f)
