@@ -1663,4 +1663,30 @@ INLINE_FUNCTION void LGBM_SetLastError(const char* msg) {
 #endif
 }
 
+/*!
+ * \brief Callback function type for DART training callbacks.
+ * \param iteration Current training iteration
+ * \param user_data User-provided data pointer
+ */
+typedef void (*LGBMDartCallback)(int iteration, void* user_data);
+
+/*!
+ * \brief Set a callback function that will be called during DART training iterations.
+ * \param handle Handle of booster
+ * \param callback Callback function to register, or NULL to clear
+ * \param user_data User data to pass to callback
+ * \return 0 when succeed, -1 when failure happens
+ */
+LIGHTGBM_C_EXPORT int LGBM_BoosterSetDartCallback(BoosterHandle handle,
+                                                   LGBMDartCallback callback,
+                                                   void* user_data);
+
+/*!
+ * \brief Set drop indices for DART from Python callback
+ * \param indices Array of tree indices to drop
+ * \param num_indices Number of indices in the array
+ * \return 0 on success, -1 on failure
+ */
+LIGHTGBM_C_EXPORT int LGBM_DartSetDropIndices(const int* indices, int num_indices);
+
 #endif  /* LIGHTGBM_INCLUDE_LIGHTGBM_C_API_H_ */

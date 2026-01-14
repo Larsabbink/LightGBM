@@ -478,3 +478,6 @@ dask-worker-space/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# python tests
+python_tests/

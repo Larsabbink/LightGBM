@@ -33,10 +33,19 @@
 #include <vector>
 
 #include "application/predictor.hpp"
+#include "boosting/dart.hpp"
 #include <LightGBM/utils/yamc/alternate_shared_mutex.hpp>
 #include <LightGBM/utils/yamc/yamc_shared_lock.hpp>
 
 namespace LightGBM {
+
+// Forward declaration for DART callback type
+typedef void (*LGBMDartCallback)(int iteration, void* user_data);
+
+// Thread-local storage definitions (defined here to avoid duplicate symbols)
+thread_local LGBMDartCallback g_dart_callback = nullptr;
+thread_local void* g_dart_callback_data = nullptr;
+thread_local std::vector<int>* g_dart_drop_indices = nullptr;
 
 inline int LGBM_APIHandleException(const std::exception& ex) {
   LGBM_SetLastError(ex.what());
@@ -412,7 +421,19 @@ class Booster {
 
   bool TrainOneIter() {
     UNIQUE_LOCK(mutex_)
-    return boosting_->TrainOneIter(nullptr, nullptr);
+    // Set thread-local callback for DART to access
+    LGBMDartCallback old_cb = LightGBM::g_dart_callback;
+    void* old_data = LightGBM::g_dart_callback_data;
+    LightGBM::g_dart_callback = dart_cb_;
+    LightGBM::g_dart_callback_data = dart_cb_data_;
+    
+    bool result = boosting_->TrainOneIter(nullptr, nullptr);
+    
+    // Restore old callback (if any)
+    LightGBM::g_dart_callback = old_cb;
+    LightGBM::g_dart_callback_data = old_data;
+    
+    return result;
   }
 
   void Refit(const int32_t* leaf_preds, int32_t nrow, int32_t ncol) {
@@ -422,7 +443,19 @@ class Booster {
 
   bool TrainOneIter(const score_t* gradients, const score_t* hessians) {
     UNIQUE_LOCK(mutex_)
-    return boosting_->TrainOneIter(gradients, hessians);
+    // Set thread-local callback for DART to access
+    LGBMDartCallback old_cb = LightGBM::g_dart_callback;
+    void* old_data = LightGBM::g_dart_callback_data;
+    LightGBM::g_dart_callback = dart_cb_;
+    LightGBM::g_dart_callback_data = dart_cb_data_;
+    
+    bool result = boosting_->TrainOneIter(gradients, hessians);
+    
+    // Restore old callback (if any)
+    LightGBM::g_dart_callback = old_cb;
+    LightGBM::g_dart_callback_data = old_data;
+    
+    return result;
   }
 
   void RollbackOneIter() {
@@ -879,6 +912,11 @@ class Booster {
 
   const Boosting* GetBoosting() const { return boosting_.get(); }
 
+  void SetDartCallback(LGBMDartCallback cb, void* user_data) {
+    dart_cb_ = cb;
+    dart_cb_data_ = user_data;
+  }
+
  private:
   const Dataset* train_data_;
   std::unique_ptr<Boosting> boosting_;
@@ -894,6 +932,9 @@ class Booster {
   std::unique_ptr<ObjectiveFunction> objective_fun_;
   /*! \brief mutex for threading safe call */
   mutable yamc::alternate::shared_mutex mutex_;
+  // DART callback
+  LGBMDartCallback dart_cb_ = nullptr;
+  void* dart_cb_data_ = nullptr;
 };
 
 }  // namespace LightGBM
@@ -3000,4 +3041,30 @@ std::pair<int, double> CSC_RowIterator::NextNonZero() {
   } else {
     return std::make_pair(-1, 0.0);
   }
+}
+
+int LGBM_BoosterSetDartCallback(BoosterHandle handle,
+                                LGBMDartCallback callback,
+                                void* user_data) {
+  API_BEGIN();
+  Booster* ref_booster = reinterpret_cast<Booster*>(handle);
+  ref_booster->SetDartCallback(callback, user_data);
+  API_END();
+}
+
+int LGBM_DartSetDropIndices(const int* indices, int num_indices) {
+  API_BEGIN();
+  // Use static thread-local storage for the vector
+  static thread_local std::vector<int> drop_indices_storage;
+  LightGBM::g_dart_drop_indices = &drop_indices_storage;
+  
+  // Clear and populate with new indices
+  LightGBM::g_dart_drop_indices->clear();
+  if (indices != nullptr && num_indices > 0) {
+    LightGBM::g_dart_drop_indices->reserve(num_indices);
+    for (int i = 0; i < num_indices; ++i) {
+      LightGBM::g_dart_drop_indices->push_back(indices[i]);
+    }
+  }
+  API_END();
 }

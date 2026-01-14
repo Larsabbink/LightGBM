@@ -294,6 +294,19 @@ if environ.get("LIGHTGBM_BUILD_DOC", "False") != "True":
     if _LIB.LGBM_RegisterLogCallback(_LIB.callback) != 0:
         raise LightGBMError(_LIB.LGBM_GetLastError().decode("utf-8"))
 
+# Define callback type for DART training callback
+_DART_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
+
+# Set up LGBM_BoosterSetDartCallback function signature
+if hasattr(_LIB, "LGBM_BoosterSetDartCallback"):
+    _LIB.LGBM_BoosterSetDartCallback.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    _LIB.LGBM_BoosterSetDartCallback.restype = ctypes.c_int
+
+# Set up LGBM_DartSetDropIndices function signature
+if hasattr(_LIB, "LGBM_DartSetDropIndices"):
+    _LIB.LGBM_DartSetDropIndices.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+    _LIB.LGBM_DartSetDropIndices.restype = ctypes.c_int
+
 
 _NUMERIC_TYPES = (int, float, bool)
 
@@ -4127,6 +4140,124 @@ class Booster:
                 self.reset_parameter({"objective": "none"}).__set_objective_to_none = True
             grad, hess = fobj(self.__inner_predict(0), self.train_set)
             return self.__boost(grad, hess)
+
+    def set_dart_callback(
+        self,
+        callback: Optional[Callable[[int, Optional[Any]], None]],
+        user_data: Optional[Any] = None,
+    ) -> "Booster":
+        """Set a callback function that will be called during DART training iterations.
+
+        This callback is specifically designed for DART boosting and is called once per
+        iteration during DroppingTrees() to allow setting drop indices via
+        set_dart_drop_indices().
+
+        Parameters
+        ----------
+        callback : callable or None, optional (default=None)
+            Callback function that will be called during DART training iterations.
+            The function should accept two parameters:
+            - iteration (int): The current iteration number
+            - user_data (optional): User data passed to the callback
+            
+            If None, the callback will be cleared.
+
+        user_data : any, optional (default=None)
+            User data to pass to the callback function.
+
+        Returns
+        -------
+        self : Booster
+            Booster with callback set.
+
+        Notes
+        -----
+        This callback is only active when using 'dart' as the boosting type.
+        The callback can use set_dart_drop_indices() to override the random tree selection.
+        
+        Note: SHAP values should be computed after booster.update() completes, not during
+        the callback. The callback is invoked once per iteration during the drop decision
+        phase.
+
+        Examples
+        --------
+        >>> def my_dart_callback(iteration, userdata):
+        ...     booster = userdata
+        ...     print(f"DART iteration: {iteration}")
+        ...     # Set drop indices based on custom logic
+        ...     booster.set_dart_drop_indices([0, 1])
+        ...
+        >>> bst = lgb.Booster(params={'boosting_type': 'dart'}, train_set=train_data)
+        >>> bst.set_dart_callback(my_dart_callback, user_data=bst)
+        >>> bst.update()  # Callback will be triggered
+        """
+        if not hasattr(_LIB, "LGBM_BoosterSetDartCallback"):
+            raise LightGBMError("LGBM_BoosterSetDartCallback is not available in this build")
+        
+        if callback is None:
+            # Clear the callback - pass NULL pointers
+            _safe_call(
+                _LIB.LGBM_BoosterSetDartCallback(
+                    self._handle,
+                    ctypes.c_void_p(0),  # NULL function pointer
+                    ctypes.c_void_p(0),  # NULL user data
+                )
+            )
+            # Release reference to prevent memory leak
+            if hasattr(self, "_dart_cb"):
+                self._dart_cb = None
+        else:
+            # Store user_data on booster to access in callback
+            self._dart_cb_user_data = user_data
+            
+            # Create wrapper callback that includes user_data
+            def callback_wrapper(iter, _):
+                callback(iter, user_data)
+            
+            # Create C callback function from Python wrapper function
+            c_cb = _DART_CB(callback_wrapper)
+            # Store reference to prevent garbage collection
+            self._dart_cb = c_cb
+            # Convert callback to void* pointer for C API
+            callback_ptr = ctypes.cast(c_cb, ctypes.c_void_p)
+            _safe_call(
+                _LIB.LGBM_BoosterSetDartCallback(
+                    self._handle,
+                    callback_ptr,
+                    ctypes.c_void_p(0),  # user_data passed via closure
+                )
+            )
+        return self
+
+    def set_dart_drop_indices(self, indices: list) -> "Booster":
+        """Set drop indices for DART from Python callback.
+        
+        This method is called from within the training callback to specify
+        which trees should be dropped during DART training. If called, these
+        indices will override the random selection logic.
+        
+        Parameters
+        ----------
+        indices : list of int
+            List of tree indices to drop (0-based tree indices).
+            
+        Returns
+        -------
+        self : Booster
+            Booster with drop indices set.
+        """
+        if not hasattr(_LIB, "LGBM_DartSetDropIndices"):
+            raise LightGBMError("LGBM_DartSetDropIndices is not available in this build")
+        
+        if not indices:
+            # Clear drop indices
+            _safe_call(_LIB.LGBM_DartSetDropIndices(None, 0))
+        else:
+            # Convert Python list to C array
+            indices_array = (ctypes.c_int * len(indices))(*indices)
+            _safe_call(_LIB.LGBM_DartSetDropIndices(indices_array, len(indices)))
+        
+        return self
 
     def __boost(
         self,
